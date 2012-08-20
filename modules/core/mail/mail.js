@@ -6,7 +6,7 @@ var rootpath = process.cwd() + '/',
   calipso = require(path.join(rootpath, 'lib/calipso')),
   Query = require("mongoose").Query,
   mustache = require("mailer/vendor/mustache"),
-  mail = require("mailer");
+  nodemailer = require("nodemailer");
 
 /**
  * Routes this module will respond to
@@ -109,7 +109,7 @@ function init(module, app, next) {
   var MailTemplate = new calipso.lib.mongoose.Schema({
     name: {type: String, required: true, "default": ''},
     to: {type: String, required: true},
-    subject: {type: String, required: false, "defualt": ''},
+    subject: {type: String, required: false, "default": ''},
     body: {type: String, required: false, "default": ''},
     event: {type: String, required: false}
   });
@@ -133,14 +133,15 @@ function bindEvents(){
           if(err || !mts){
             calipso.debug("Email: " + mts.name + " was not sent because: " + (err || "unknown."));
           }
-          sendMail(mts, data);
+          senodemailer(mts, data);
         });
       });
     });
   });
 }
 
-function sendMail(templates, data){
+function senodemailer(templates, data){
+
   if(!templates || !templates.length){
     return;
   }
@@ -158,11 +159,11 @@ function sendMail(templates, data){
   }
   User.find(query, function(err, users){
     if(err || !users){
-      return sendMail(templates, data);
+      return senodemailer(templates, data);
     }
     function parseUsers(users){
       if(!users || !users.length){
-        return sendMail(templates, data);
+        return senodemailer(templates, data);
       }
       var user = users.splice(0,1)[0];
       toUser(user, template, data, function(){
@@ -180,9 +181,12 @@ function toUser(user, template, data, callback) {
   var base64 = calipso.config.getModuleConfig("mail", "base64")
   var username = calipso.config.getModuleConfig("mail", "username");
   var password = calipso.config.getModuleConfig("mail", "password");
-  if (!host || !port || !domain || !username || !password ){
+	var secure = calipso.config.getModuleConfig("mail", "ssl") == true ? true : false;
+
+  if (!host || !port || !username || !password ){
     return;
   }
+
   if (base64) {
     username = (new Buffer(username)).toString("base64");
     password = (new Buffer(password)).toString("base64");
@@ -193,25 +197,35 @@ function toUser(user, template, data, callback) {
     address: calipso.config.get('server:url'),
     data: data
   });
-  mail.send({
-    host: host,                      // smtp server hostname
-    port: port,                      // smtp server port
-    domain: domain,                  // domain used by client to identify itself to server
+
+	var transport = nodemailer.createTransport("SMTP", {
+		host: host, // hostname
+		secureConnection: secure, // use SSL
+		port: port, // port for secure SMTP
+		auth: {
+			user: username,
+			pass: password
+		}
+	});
+
+	var message = {
+		debug:true,
+		from: calipso.config.getModuleConfig("mail", "from"),
     to: user.email,
-    from: calipso.config.getModuleConfig("mail", "from"),
-    subject: template.subject,
-    body: body,
-    authentication: calipso.config.getModuleConfig("mail", "authentication") ? 'login' : '',
-    ssl: calipso.config.getModuleConfig("mail", "ssl") == true ? true : false,                         // true/false
-    username: username,              // Account username
-    password: password               // Account password
-  },
-  function(err, result){
+		subject: template.subject,
+		headers: {
+			'X-Laziness-level':1000
+		},
+		text:body 
+	};
+
+	transport.sendMail(message,  function(err, result){
       if(err){
         calipso.debug("Error in mail.js: " + err);
       } else {
         calipso.debug("Email sent with result: " + result);
       }
+			transport.close();
       callback();
   });
 }
